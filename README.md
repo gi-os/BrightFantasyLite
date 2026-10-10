@@ -1,5 +1,7 @@
 # BrightFantasy Lite
 
+> **This is the Lite version.** BrightFantasy Lite is built only with Light's official SDK, so it can go in the Light Tool Library. It does less than the full app. For the full app, get [BrightFantasy](https://github.com/gi-os/BrightFantasy) ([on BrightMarket](https://brightmarket.gzl.dev/app/com.gios.brightfantasy/)).
+
 ESPN fantasy football as a Light Phone III tool. It shows your matchup, lets you set your
 lineup, and has the standings, the week's scores and the waiver wire. It is a port of
 [BrightFantasy](https://github.com/gi-os/BrightFantasy), Giovanni's sideloaded app, to the
