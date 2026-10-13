@@ -143,7 +143,7 @@ class MatchupScreen(sealedActivity: SealedLightActivity) :
                     }
                 }
                 if (config?.configured == true) {
-                    LightBottomBar(
+                    FitBottomBar(
                         listOf(
                             LightBarButton.Text("MY TEAM", onClick = { navigateTo({ RosterScreen(it) }) }),
                             LightBarButton.Text("LEAGUE", onClick = { navigateTo({ LeagueScreen(it) }) }),
