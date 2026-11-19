@@ -61,6 +61,41 @@ fun CenterMessage(text: String) {
     }
 }
 
+/** The reason shown for a failed load. A refused login gets its own words. */
+fun loadErrorText(error: String?, needsLogin: Boolean): String =
+    if (needsLogin) "ESPN did not accept the login. Scan a new setup code." else error ?: "Something went wrong."
+
+/** A tappable, underlined line of Copy text, centered. */
+@Composable
+fun ActionLink(text: String, onClick: () -> Unit) {
+    LightText(
+        text = text,
+        variant = LightTextVariant.Copy,
+        underline = true,
+        align = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth().lightClickable { onClick() }.padding(vertical = 0.5f.gridUnitsAsDp()),
+    )
+}
+
+/**
+ * The body of any screen that has nothing to show because the load failed: "Could not
+ * load", the reason, and the two ways out. The empty state never stands in for this.
+ */
+@Composable
+fun ErrorView(reason: String, onRetry: () -> Unit, onSetup: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 2f.gridUnitsAsDp()),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        LightText(text = "Could not load", variant = LightTextVariant.Copy, align = TextAlign.Center)
+        LightText(text = reason, variant = LightTextVariant.Copy, align = TextAlign.Center)
+        Spacer(Modifier.height(1f.gridUnitsAsDp()))
+        ActionLink("Try again", onRetry)
+        ActionLink("Edit setup", onSetup)
+    }
+}
+
 @Composable
 fun SectionHeader(text: String) {
     LightText(

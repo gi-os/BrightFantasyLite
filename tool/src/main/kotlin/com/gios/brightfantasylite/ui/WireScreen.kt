@@ -34,6 +34,7 @@ import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
+import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -56,6 +57,7 @@ data class WireState(
     val loading: Boolean = false,
     val agents: List<FreeAgent> = emptyList(),
     val error: String? = null,
+    val needsLogin: Boolean = false,
 )
 
 /**
@@ -91,13 +93,13 @@ class WireViewModel(private val fantasy: Fantasy) : WheelViewModel<Unit>() {
     fun load() {
         if (_state.value.loading) return
         loaded = true
-        _state.value = _state.value.copy(loading = true, error = null)
+        _state.value = _state.value.copy(loading = true, error = null, needsLogin = false)
         viewModelScope.launch {
             fantasy.loadConfig()
             val result = fantasy.freeAgents(FILTERS[_state.value.filter].second, onWaivers = null)
             _state.value = when (result) {
                 is Fantasy.Outcome.Ok -> _state.value.copy(loading = false, agents = result.value)
-                is Fantasy.Outcome.Failed -> _state.value.copy(loading = false, error = result.message)
+                is Fantasy.Outcome.Failed -> _state.value.copy(loading = false, error = result.message, needsLogin = result.needsLogin)
             }
         }
     }
@@ -138,12 +140,24 @@ class WireScreen(sealedActivity: SealedLightActivity) :
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     when {
                         state.loading && state.agents.isEmpty() -> CenterMessage("Loading…")
-                        state.error != null && state.agents.isEmpty() -> CenterMessage(state.error ?: "")
+                        state.error != null && state.agents.isEmpty() -> ErrorView(
+                            reason = loadErrorText(state.error, state.needsLogin),
+                            onRetry = viewModel::load,
+                            onSetup = { navigateTo({ SetupScreen(it) }) { viewModel.load() } },
+                        )
                         state.agents.isEmpty() -> CenterMessage("Nobody available at ${FILTERS[state.filter].first}.")
                         else -> LightScrollView(
                             scrollState = scroll,
                             modifier = Modifier.fillMaxSize().padding(horizontal = 1f.gridUnitsAsDp()),
                         ) {
+                            if (state.error != null && !state.loading) {
+                                LightText(
+                                    text = loadErrorText(state.error, state.needsLogin).trimEnd('.') + ". Tap to try again.",
+                                    variant = LightTextVariant.Detail,
+                                    align = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth().lightClickable { viewModel.load() },
+                                )
+                            }
                             LightText(
                                 text = if (state.loading) "Updating…" else "Sorted by ${if (byProjection) "this week's projection" else "percent owned"}. W = on waivers.",
                                 variant = LightTextVariant.Fine,

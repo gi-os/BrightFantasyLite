@@ -24,6 +24,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
+/** What a load says when there is no network. */
+private const val OFFLINE = "No connection."
+
 /** League id, season, which team is yours, and the two ESPN cookies. */
 data class Config(
     val leagueId: String = "",
@@ -103,8 +106,16 @@ class Fantasy private constructor(ctx: SealedLightContext) {
     private val _needsLogin = MutableStateFlow(false)
     val needsLogin: StateFlow<Boolean> = _needsLogin.asStateFlow()
 
+    /** When the last load fully succeeded. 0 until one has; a failed load never sets it. */
     private val _loadedAt = MutableStateFlow(0L)
     val loadedAt: StateFlow<Long> = _loadedAt.asStateFlow()
+
+    /** True while the league on screen came from the disk cache because there was no network. */
+    private val _offline = MutableStateFlow(false)
+    val offline: StateFlow<Boolean> = _offline.asStateFlow()
+
+    @Volatile
+    private var leagueFromCache = false
 
     private val _byProjection = MutableStateFlow(true)
     val byProjection: StateFlow<Boolean> = _byProjection.asStateFlow()
@@ -156,7 +167,8 @@ class Fantasy private constructor(ctx: SealedLightContext) {
 
     /**
      * Saves a new league and cookies, then proves them by loading the league. Returns
-     * null when ESPN accepted them, otherwise ESPN's reason. A new league is a new team,
+     * null when ESPN accepted them, otherwise ESPN's reason. With no network the settings
+     * are kept and the answer says so, because nothing could be checked. A new league is a new team,
      * so the team id is reset unless the setup code carried one.
      */
     suspend fun applySetup(leagueId: String, swid: String, espnS2: String, season: Int, teamId: Int?): String? {
@@ -172,7 +184,8 @@ class Fantasy private constructor(ctx: SealedLightContext) {
         resetState()
         _needsLogin.value = false
         refresh(force = true)
-        return _error.value
+        val problem = _error.value ?: return null
+        return if (problem == OFFLINE) "Saved, could not check. $OFFLINE" else problem
     }
 
     suspend fun signOut() {
@@ -187,6 +200,7 @@ class Fantasy private constructor(ctx: SealedLightContext) {
         _scoreboard.value = emptyList()
         _week.value = 0
         _loadedAt.value = 0L
+        _offline.value = false
         _error.value = null
     }
 
@@ -213,8 +227,10 @@ class Fantasy private constructor(ctx: SealedLightContext) {
                     _error.value = null
                     if (_week.value == 0) _week.value = defaultWeek(state)
                     ensureTeamId(state)
-                    loadWeekData()
-                    _loadedAt.value = System.currentTimeMillis()
+                    _offline.value = leagueFromCache
+                    // Only a load that got the week as well counts as an update; a cached
+                    // league or a failed week must not read "Updated just now".
+                    if (loadWeekData() == null && !leagueFromCache) _loadedAt.value = System.currentTimeMillis()
                 }
                 is Outcome.Failed -> fail(result)
             }
@@ -255,16 +271,28 @@ class Fantasy private constructor(ctx: SealedLightContext) {
         val bounds = if (played.isEmpty()) 1..state.info.finalScoringPeriod else played.first()..played.last()
         val next = (_week.value + delta).coerceIn(bounds)
         if (next == _week.value) return
+        val previous = _week.value
         _week.value = next
-        busy { loadWeekData() }
+        busy {
+            val failed = loadWeekData()
+            if (failed != null) {
+                // The old week's lineup is still what is on screen, so the label goes back
+                // to match it rather than naming a week it is not showing.
+                _week.value = previous
+                _error.value = "Could not load week $next. ${failed.message}"
+            }
+        }
     }
 
-    private suspend fun loadWeekData() {
+    /** Loads the current week for the current team. Null on success, the failure otherwise. */
+    private suspend fun loadWeekData(): Outcome.Failed? {
         val teamId = config.teamId
         val week = _week.value
-        if (teamId == 0 || week == 0) return
-        when (val result = loadWeek(week)) {
+        if (teamId == 0 || week == 0) return null
+        return when (val result = loadWeek(week)) {
             is Outcome.Ok -> {
+                _error.value = null
+                _needsLogin.value = false
                 _scoreboard.value = result.value
                 val m = result.value.firstOrNull { it.involves(teamId) }
                 if (m == null) {
@@ -279,8 +307,12 @@ class Fantasy private constructor(ctx: SealedLightContext) {
                     _matchup.value = MatchupDetail(m, teamId, mine, theirs)
                     _roster.value = mine
                 }
+                null
             }
-            is Outcome.Failed -> fail(result)
+            is Outcome.Failed -> {
+                fail(result)
+                result
+            }
         }
     }
 
@@ -299,19 +331,23 @@ class Fantasy private constructor(ctx: SealedLightContext) {
             parse(body)?.let { Outcome.Ok(it) }
                 ?: Outcome.Failed("ESPN answered with something this tool could not read.")
         is FantasyApi.Result.Denied -> Outcome.Failed(message, needsLogin = code == 401 || code == 403)
-        is FantasyApi.Result.Offline -> Outcome.Failed("No connection.")
+        is FantasyApi.Result.Offline -> Outcome.Failed(OFFLINE)
     }
 
     private suspend fun loadLeague(): Outcome<LeagueState> = withContext(Dispatchers.IO) {
         val season = config.effectiveSeason()
         val leagueId = config.leagueId
+        leagueFromCache = false
         val meta = api.get(Espn.readUrl(season, leagueId, listOf("mSettings", "mTeam", "mStandings")))
         val metaBody = when (meta) {
             is FantasyApi.Result.Ok -> meta.body
             is FantasyApi.Result.Denied ->
                 return@withContext Outcome.Failed(meta.message, meta.code == 401 || meta.code == 403)
-            is FantasyApi.Result.Offline ->
-                return@withContext cachedLeague()?.let { Outcome.Ok(it) } ?: Outcome.Failed("No connection.")
+            is FantasyApi.Result.Offline -> {
+                val cached = cachedLeague()
+                leagueFromCache = cached != null
+                return@withContext cached?.let { Outcome.Ok(it) } ?: Outcome.Failed(OFFLINE)
+            }
         }
         val info = FantasyParser.parseLeague(metaBody, leagueId)
             ?: return@withContext Outcome.Failed("ESPN answered with something this tool could not read.")
@@ -403,7 +439,7 @@ class Fantasy private constructor(ctx: SealedLightContext) {
                     problem = result.message
                     if (result.code == 401 || result.code == 403) _needsLogin.value = true
                 }
-                is FantasyApi.Result.Offline -> problem = "No connection. Nothing was changed."
+                is FantasyApi.Result.Offline -> problem = "$OFFLINE Nothing was changed."
             }
         }
         return problem

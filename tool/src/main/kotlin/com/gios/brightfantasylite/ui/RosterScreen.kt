@@ -103,6 +103,9 @@ class RosterScreen(sealedActivity: SealedLightActivity) :
         val roster by fantasy.roster.collectAsState()
         val week by fantasy.week.collectAsState()
         val busy by fantasy.busy.collectAsState()
+        val error by fantasy.error.collectAsState()
+        val needsLogin by fantasy.needsLogin.collectAsState()
+        val offline by fantasy.offline.collectAsState()
         val loadedAt by fantasy.loadedAt.collectAsState()
         val picked by viewModel.picked.collectAsState()
         val refused by viewModel.refused.collectAsState()
@@ -122,7 +125,15 @@ class RosterScreen(sealedActivity: SealedLightActivity) :
                     val l = league
                     val r = roster
                     if (l == null || r == null) {
-                        CenterMessage(if (busy) "Loading…" else "No roster for this week.")
+                        when {
+                            busy -> CenterMessage("Loading…")
+                            error != null || needsLogin -> ErrorView(
+                                reason = loadErrorText(error, needsLogin),
+                                onRetry = viewModel::retry,
+                                onSetup = { navigateTo({ SetupScreen(it) }) },
+                            )
+                            else -> CenterMessage("No roster for this week.")
+                        }
                     } else {
                         val editable = Lineup.editable(week, l.info.scoringPeriodId)
                         val played = l.weeksPlayed()
@@ -131,7 +142,13 @@ class RosterScreen(sealedActivity: SealedLightActivity) :
                             scrollState = scroll,
                             modifier = Modifier.fillMaxSize().padding(horizontal = 1f.gridUnitsAsDp()),
                         ) {
-                            StatusLine(busy || saving, loadedAt, null)
+                            StatusLine(
+                                busy = busy || saving,
+                                loadedAt = loadedAt,
+                                problem = if (error != null || needsLogin) loadErrorText(error, needsLogin) else null,
+                                offline = offline,
+                                onRetry = viewModel::retry,
+                            )
                             WeekBar(
                                 label = "WEEK $week",
                                 canGoBack = played.isEmpty() || week > played.first(),
