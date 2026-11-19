@@ -68,6 +68,12 @@ open class FantasyViewModel<R>(protected val fantasy: Fantasy) : WheelViewModel<
         viewModelScope.launch { fantasy.refresh(force = true) }
     }
 
+    /** Tries the failed load again; unlike [refreshNow] it ignores the floor between refreshes. */
+    fun retry() {
+        if (fantasy.busy.value) return
+        viewModelScope.launch { fantasy.refresh(force = true) }
+    }
+
     fun stepWeek(delta: Int) {
         viewModelScope.launch { fantasy.stepWeek(delta) }
     }
@@ -107,6 +113,7 @@ class MatchupScreen(sealedActivity: SealedLightActivity) :
         val busy by fantasy.busy.collectAsState()
         val error by fantasy.error.collectAsState()
         val needsLogin by fantasy.needsLogin.collectAsState()
+        val offline by fantasy.offline.collectAsState()
         val loadedAt by fantasy.loadedAt.collectAsState()
         val modal by viewModel.modal.collectAsState()
         val scroll = rememberScrollState()
@@ -130,19 +137,39 @@ class MatchupScreen(sealedActivity: SealedLightActivity) :
                         config?.configured != true ->
                             CenterMessage("Set up your ESPN league to see your matchup.")
                         l == null && busy -> CenterMessage("Loading…")
-                        l == null -> CenterMessage(error ?: "Nothing loaded yet.")
+                        l == null && (error != null || needsLogin) -> ErrorView(
+                            reason = loadErrorText(error, needsLogin),
+                            onRetry = viewModel::retry,
+                            onSetup = { navigateTo({ SetupScreen(it) }) },
+                        )
+                        l == null -> CenterMessage("Nothing loaded yet.")
+                        // The league is there (from the cache, say) but the week never loaded.
+                        detail == null && !busy && (error != null || needsLogin) -> ErrorView(
+                            reason = loadErrorText(error, needsLogin),
+                            onRetry = viewModel::retry,
+                            onSetup = { navigateTo({ SetupScreen(it) }) },
+                        )
                         else -> LightScrollView(
                             scrollState = scroll,
                             modifier = Modifier.fillMaxSize().padding(horizontal = 1f.gridUnitsAsDp()),
                         ) {
-                            StatusLine(busy, loadedAt, if (needsLogin) "ESPN refused the login. Make a fresh setup code." else null)
+                            StatusLine(
+                                busy = busy,
+                                loadedAt = loadedAt,
+                                problem = if (error != null || needsLogin) loadErrorText(error, needsLogin) else null,
+                                offline = offline,
+                                onRetry = viewModel::retry,
+                            )
                             MatchupBody(l, detail, week, fantasy.teamId, viewModel::stepWeek) { slot ->
                                 viewModel.showModal(playerSummary(slot))
                             }
                         }
                     }
                 }
-                if (config?.configured == true) {
+                if (config?.configured == true && league == null && (error != null || needsLogin)) {
+                    // Nothing loaded and the load failed, so the tabs have nothing to open.
+                    LightBottomBar(listOf(LightBarButton.Text("SET UP", onClick = { navigateTo({ SetupScreen(it) }) })))
+                } else if (config?.configured == true) {
                     FitBottomBar(
                         listOf(
                             LightBarButton.Text("MY TEAM", onClick = { navigateTo({ RosterScreen(it) }) }),
@@ -163,12 +190,32 @@ class MatchupScreen(sealedActivity: SealedLightActivity) :
     }
 }
 
-/** "Updating…", or how old the numbers are, or why they are wrong. */
+/**
+ * "Updating…", or why the numbers are wrong (readable, and a tap tries again), or
+ * "Offline" when they came from the cache, or how old they are.
+ */
 @Composable
-fun StatusLine(busy: Boolean, loadedAt: Long, problem: String?) {
+fun StatusLine(
+    busy: Boolean,
+    loadedAt: Long,
+    problem: String?,
+    offline: Boolean = false,
+    onRetry: (() -> Unit)? = null,
+) {
+    if (!busy && problem != null) {
+        LightText(
+            text = if (onRetry != null) problem.trimEnd('.') + ". Tap to try again." else problem,
+            variant = LightTextVariant.Detail,
+            align = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (onRetry != null) Modifier.lightClickable { onRetry() } else Modifier),
+        )
+        return
+    }
     val text = when {
         busy -> "Updating…"
-        problem != null -> problem
+        offline -> "Offline"
         loadedAt > 0 -> "Updated ${Refresh.ago(loadedAt, System.currentTimeMillis())}"
         else -> ""
     }

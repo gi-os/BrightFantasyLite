@@ -1,5 +1,6 @@
 package com.gios.brightfantasylite.ui
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -10,7 +11,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.lifecycle.viewModelScope
 import com.gios.brightfantasylite.data.Espn
 import com.gios.brightfantasylite.data.Fantasy
@@ -148,8 +154,19 @@ class SetupScreen(sealedActivity: SealedLightActivity) :
         val state by viewModel.state.collectAsState()
         val league by fantasy.league.collectAsState()
         val config by fantasy.configState.collectAsState()
+        var confirmingRemove by remember { mutableStateOf(false) }
 
         FantasySurface {
+            if (confirmingRemove) {
+                RemoveConfirm(
+                    onRemove = {
+                        viewModel.signOut()
+                        confirmingRemove = false
+                    },
+                    onCancel = { confirmingRemove = false },
+                )
+                return@FantasySurface
+            }
             Column(Modifier.fillMaxSize()) {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(LightIcons.BACK, onClick = { goBack(null) }),
@@ -206,7 +223,7 @@ class SetupScreen(sealedActivity: SealedLightActivity) :
                             text = "Remove league and cookies",
                             variant = LightTextVariant.Detail,
                             underline = true,
-                            modifier = Modifier.lightClickable { viewModel.signOut() },
+                            modifier = Modifier.lightClickable { confirmingRemove = true },
                         )
                     }
                     Spacer(Modifier.height(1f.gridUnitsAsDp()))
@@ -222,6 +239,25 @@ class SetupScreen(sealedActivity: SealedLightActivity) :
                 Box(Modifier.fillMaxSize()) { LightFullscreenModal(message = it, onClose = viewModel::dismissError) }
             }
         }
+    }
+}
+
+/** "Remove league and cookies from this phone?" with its two answers, in place of the form. */
+@Composable
+private fun RemoveConfirm(onRemove: () -> Unit, onCancel: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 2f.gridUnitsAsDp()),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        LightText(
+            text = "Remove league and cookies from this phone?",
+            variant = LightTextVariant.Copy,
+            align = TextAlign.Center,
+        )
+        Spacer(Modifier.height(1f.gridUnitsAsDp()))
+        ActionLink("Remove", onRemove)
+        ActionLink("Cancel", onCancel)
     }
 }
 

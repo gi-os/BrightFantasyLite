@@ -58,6 +58,9 @@ class LeagueScreen(sealedActivity: SealedLightActivity) :
         val scoreboard by fantasy.scoreboard.collectAsState()
         val week by fantasy.week.collectAsState()
         val busy by fantasy.busy.collectAsState()
+        val error by fantasy.error.collectAsState()
+        val needsLogin by fantasy.needsLogin.collectAsState()
+        val offline by fantasy.offline.collectAsState()
         val loadedAt by fantasy.loadedAt.collectAsState()
         val scores by viewModel.scores.collectAsState()
         val modal by viewModel.modal.collectAsState()
@@ -73,14 +76,29 @@ class LeagueScreen(sealedActivity: SealedLightActivity) :
                 )
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     val l = league
-                    if (l == null) {
-                        CenterMessage(if (busy) "Loading…" else "Nothing loaded yet.")
+                    val failed = error != null || needsLogin
+                    if (l == null || (scores && scoreboard.isEmpty() && failed && !busy)) {
+                        when {
+                            busy -> CenterMessage("Loading…")
+                            failed -> ErrorView(
+                                reason = loadErrorText(error, needsLogin),
+                                onRetry = viewModel::retry,
+                                onSetup = { navigateTo({ SetupScreen(it) }) },
+                            )
+                            else -> CenterMessage("Nothing loaded yet.")
+                        }
                     } else {
                         LightScrollView(
                             scrollState = scroll,
                             modifier = Modifier.fillMaxSize().padding(horizontal = 1f.gridUnitsAsDp()),
                         ) {
-                            StatusLine(busy, loadedAt, null)
+                            StatusLine(
+                                busy = busy,
+                                loadedAt = loadedAt,
+                                problem = if (failed) loadErrorText(error, needsLogin) else null,
+                                offline = offline,
+                                onRetry = viewModel::retry,
+                            )
                             if (scores) {
                                 val played = l.weeksPlayed()
                                 WeekBar(
